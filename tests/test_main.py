@@ -2,64 +2,86 @@ import pytest
 from pathlib import Path
 import tempfile
 from datetime import datetime, timedelta
-from clocktail.main import TaskManager  # Assuming the main code is saved as task_manager.py
+from clocktail.main import TaskManager, Task  # Assuming the main code is saved as task_manager.py
 
 @pytest.fixture
 def manager():
     # Set up a fresh TaskManager for each test
     with tempfile.TemporaryDirectory() as _d:
         tm = TaskManager(Path(_d).joinpath("tasks.json"))
-        tm.projects = {}
         yield tm
 
 def test_add_task(manager):
-    manager.add_task("Project1", "Task 1")
-    assert len(manager.projects["Project1"]) == 1
-    assert manager.projects["Project1"][0]["description"] == "Task 1"
+    project = manager.add_project("Project1")
+    manager.add_task(project, "Task 1", "")
+    assert len(manager.projects) == 1
+    assert manager.projects[0].tasks[0].name == "Task 1"
 
-def test_list_projects(manager):
-    manager.add_task("Project1", "Task 1")
-    manager.add_task("Project2", "Task 2")
-    projects = manager.list_projects()
-    assert "Project1" in projects
-    assert "Project2" in projects
+def test_save_n_load(manager):
+    project = manager.add_project("Project1")
+    manager.add_task(project, "Task 1", "Desc 1") # Will save changes
+    manager.projects = []
+    manager.load_tasks()
+    assert len(manager.projects) == 1
+    assert manager.projects[0].tasks[0].name == "Task 1"
+    assert manager.projects[0].tasks[0].description == "Desc 1"
 
-def test_get_next_task_no_snooze(manager):
-    manager.add_task("Project1", "Task 1")
-    project, task = manager.get_next_task()
-    assert project == "Project1"
-    assert task["description"] == "Task 1"
+def test_get_next_task(manager):
+    project = manager.add_project("Project 1")
+    manager.add_task(project, "Task 1")
+    manager.add_task(project, "Task 2")
+    project = manager.add_project("Project 2")
+    manager.add_task(project, "Task 3")
+    manager.add_task(project, "Task 4")
+    task = manager.get_next_task()
+    assert task.project.name == "Project 1"
+    assert task.name == "Task 1"
+    manager.get_next_task()
+    manager.get_next_task()
+    task = manager.get_next_task()
+    assert task.project.name == "Project 2"
+    assert task.name == "Task 4"
+    task = manager.get_next_task()
+    assert task.project.name == "Project 1"
+    assert task.name == "Task 1"
 
 def test_get_next_task_snoozed_past(manager):
-    task = manager.add_task("Project1", "Task 1",)
-    manager.snooze_task("Project1", task['id'],-10,"")
-    manager.list_projects_and_tasks()
-    project, task = manager.get_next_task()
-    assert project == "Project1"
-    assert task["description"] == "Task 1"
-    assert task["snooze_until"] is None
+    project = manager.add_project("Project 1")
+    task = manager.add_task(project, "Task 1")
+    manager.snooze_task(task, -10)
+    manager.load_tasks()
+    task = manager.get_next_task()
+    assert task.project.name == "Project 1"
+    assert task.name == "Task 1"
+    assert task.snooze_until is None
 
 def test_get_next_task_snoozed_future(manager):
-    task = manager.add_task("Project1", "Task 1",)
-    manager.snooze_task("Project1", task['id'],10,"")
-    manager.list_projects_and_tasks()
-    project, task = manager.get_next_task()
+    project = manager.add_project("Project 1")
+    task = manager.add_task(project, "Task 1")
+    manager.snooze_task(task, 10)
+    task = manager.get_next_task()
     assert task is None  # No task should be returned yet
 
 def test_mark_task_as_done(manager):
-    task = manager.add_task("Project1", "Task 1")
-    manager.mark_task("Project1", task['id'], "done")
-    task = manager.projects["Project1"][0]
-    assert task["status"] == "done"
+    manager.add_task(manager.add_project("Project1"), "Task 1")
+    task = manager.projects[0].tasks[0]
+    manager.mark_task(task, "done")
+    manager.load_tasks()
+    task = manager.projects[0].tasks[0]
+    assert task.status == "done"
 
 def test_snooze_task(manager):
-    manager.add_task("Project1", "Task 1")
-    manager.snooze_task("Project1", 1, 10, "Waiting for input")
-    task = manager.projects["Project1"][0]
-    assert task["status"] == "waiting"
-    assert task["snooze_until"] is not None
+    task = manager.add_task(manager.add_project("Project1"), "Task 1")
+    manager.snooze_task(task, 10)
+    manager.load_tasks()
+    task: Task = manager.projects[0].tasks[0]
+    assert task.status == "waiting"
+    assert (task.snooze_until - datetime.now()) >= timedelta(minutes=9)
 
 def test_edit_task(manager):
-    manager.add_task("Project1", "Task 1")
-    manager.projects["Project1"][0]["description"] = "Updated Task 1"
-    assert manager.projects["Project1"][0]["description"] == "Updated Task 1"
+    task = manager.add_task(manager.add_project("Project1"), "Task 1")
+    manager.edit_task(task, "Updated Task 1", "123")
+    manager.load_tasks()
+    assert manager.projects[0].tasks[0].name == "Updated Task 1"
+    assert manager.projects[0].tasks[0].description == "123"
+
