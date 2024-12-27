@@ -214,6 +214,8 @@ def main():
                 project_choice = input("Select a project by number or press Enter to create a new project: ")
                 if project_choice.isdigit() and 1 <= int(project_choice) <= len(manager.projects):
                     project = manager.projects[int(project_choice) - 1]
+                elif project_choice == "":
+                    project = None
                 else:
                     print("Invalid input:")
                     time.sleep(1)
