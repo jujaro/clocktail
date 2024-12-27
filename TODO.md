@@ -1,5 +1,6 @@
-- Task don't rotate properly. The process always start with the first tasks in the list.
-- Skip task doesn't work because of 👆
-
 - status must be enum
-- 
+- change the backend from a json file to ... something better. (Maybe keep old versions)
+- Make the prompting more effective (no need to enter, should be able to edit existing text)
+- done projects can be deleted from the database but after some time (like a week)
+- we should be able to create templates of projects as many are pretty much the same.
+- allow integrations or plugins so that you can automate more of the things that you do.
