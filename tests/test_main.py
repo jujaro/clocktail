@@ -66,7 +66,6 @@ def test_mark_task_as_done(manager):
     manager.add_task(manager.add_project("Project1"), "Task 1")
     task = manager.projects[0].tasks[0]
     manager.mark_task(task, "done")
-    manager.load_tasks()
     task = manager.projects[0].tasks[0]
     assert task.status == "done"
 
