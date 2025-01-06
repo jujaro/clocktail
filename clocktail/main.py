@@ -5,7 +5,6 @@ import json
 from datetime import datetime, timedelta
 import time
 from pathlib import Path
-from readline import clear_history
 from weakref import ref
 import subprocess
 import tempfile
