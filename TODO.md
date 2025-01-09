@@ -1,6 +1,5 @@
+- Snoozing could be done in mins, hours or days.
 - status must be enum
-- change the backend from a json file to ... something better. (Maybe keep old versions)
-- Make the prompting more effective (no need to enter, should be able to edit existing text)
-- done projects can be deleted from the database but after some time (like a week)
+- Projects shouldn't be deleted whith all the tasks done, not after a few days maybe.
 - we should be able to create templates of projects as many are pretty much the same.
 - allow integrations or plugins so that you can automate more of the things that you do.
