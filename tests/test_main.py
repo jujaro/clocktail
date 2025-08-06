@@ -48,7 +48,7 @@ def test_get_next_task(manager):
 def test_get_next_task_snoozed_past(manager):
     project = manager.add_project("Project 1")
     task = manager.add_task(project, "Task 1")
-    manager.snooze_task(task, -10)
+    manager.snooze_task(task, timedelta(minutes=-10))
     manager.load_tasks()
     task = manager.get_next_task()
     assert task.project.name == "Project 1"
@@ -58,7 +58,7 @@ def test_get_next_task_snoozed_past(manager):
 def test_get_next_task_snoozed_future(manager):
     project = manager.add_project("Project 1")
     task = manager.add_task(project, "Task 1")
-    manager.snooze_task(task, 10)
+    manager.snooze_task(task, timedelta(minutes=10))
     task = manager.get_next_task()
     assert task is None  # No task should be returned yet
 
@@ -71,7 +71,7 @@ def test_mark_task_as_done(manager):
 
 def test_snooze_task(manager):
     task = manager.add_task(manager.add_project("Project1"), "Task 1")
-    manager.snooze_task(task, 10)
+    manager.snooze_task(task, timedelta(minutes=10))
     manager.load_tasks()
     task: Task = manager.projects[0].tasks[0]
     assert task.status == "waiting"

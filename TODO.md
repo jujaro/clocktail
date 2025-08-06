@@ -1,5 +1,22 @@
-- Snoozing could be done in mins, hours or days.
+- We should be able to edit any task, not only the current task.
 - status must be enum
-- Projects shouldn't be deleted whith all the tasks done, not after a few days maybe.
 - we should be able to create templates of projects as many are pretty much the same.
 - allow integrations or plugins so that you can automate more of the things that you do.
+- Maybe we should put priorities in projects as well. So that if a project is important we always show it first.
+- We should be able to cancel a task (Not just move it to done)
+- You should be able to snooze an entire project.
+- We should be able to add priorities to tasks and projects.
+- We should be able to schedule tasks, so that they come active when at a given schedule (every day at certain hour)
+- We need quick menu like:
+  - add task to the current project
+  - edit the current project
+  - view the current project details
+  - edit the current task.
+  - Show extended options.
+  - Mark current task as done.
+- ANd extended options like.
+  - add task to any project
+  - edit any project
+  - view all the projects and tasks details
+  - search in all the projects and tasks.
+  - Mark any task as done or not done.

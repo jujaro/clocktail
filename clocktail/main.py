@@ -8,6 +8,10 @@ from pathlib import Path
 from weakref import ref
 import subprocess
 import tempfile
+import re
+
+# Projects should be deleted after this
+PROJECT_MAX_DAYS=15
 
 @dataclass
 class Task:
@@ -36,17 +40,23 @@ class Task:
         self.display()
         print("="*80)
 
+    def wake_up(self):
+        self.status = "running"
+        self.snooze_until = None
+        self.project.save_tasks()
+
 
 @dataclass
 class Project:
     name: str
+    creation_time: datetime = field(default_factory=datetime.now)
     description: str = ""
     tasks: list[Task] = field(default_factory=list)
-
     def to_dict(self):
         return {
             "name": self.name,
             "description": self.description,
+            "creation_time": self.creation_time.isoformat(),
             "tasks": [
                 {
                 "name": task.name,
@@ -75,6 +85,12 @@ class Project:
                 return False
         return True
 
+    def can_be_deleted(self) -> bool:
+        return (
+                self.is_done() and
+                (datetime.now() - self.creation_time) > timedelta(days=PROJECT_MAX_DAYS)
+        )
+
 def prompt_with_editor(text: str):
     editor = os.getenv("EDITOR", "vim")
 
@@ -93,6 +109,26 @@ def prompt_with_editor(text: str):
 
     return content
 
+def prompt_duration() -> timedelta|None:
+    def _invalid(i:str):
+        print(f"Invalid input:{i}")
+        time.sleep(2)
+
+    str_input = input("Duration to snooze (suffix with m/h/d): ")
+    mmatch = re.match("([0-9]+)([mhd])", str_input)
+    if mmatch:
+        number, letter = mmatch.groups()
+        number = int(number)
+        match letter:
+            case "m":
+                return timedelta(minutes=number)
+            case "h":
+                return timedelta(hours=number)
+            case "d":
+                return timedelta(days=number)
+    _invalid(str_input)
+    return None
+
 
 class TaskManager:
     def __init__(self, backend_path: Path):
@@ -102,7 +138,7 @@ class TaskManager:
         self.load_tasks()
 
     @property
-    def active_projects(self):
+    def running_projects(self):
         return [p for p in self.projects if not p.is_done()]
 
     def load_tasks(self) -> None:
@@ -110,7 +146,13 @@ class TaskManager:
             with open(self.backend_path, "r") as _f:
                 self.projects = []
                 for d_project in json.load(_f):
-                    project = Project(d_project['name'], d_project.get('description', ''))
+                    project = Project(
+                        name=d_project['name'],
+                        creation_time=datetime.fromisoformat(
+                            d_project.get('creation_time', datetime.now().isoformat())
+                        ),
+                        description=d_project.get('description', '')
+                    )
                     for d_task in d_project['tasks']:
                         task = Task(
                             name=d_task['name'],
@@ -129,7 +171,8 @@ class TaskManager:
 
     def save_tasks(self) -> None:
         with open(self.backend_path, "w") as _f:
-            json.dump(self.active_projects, _f, indent=4, default=lambda x: x.to_dict())
+            projects_to_keep = [p for p in self.projects if not p.can_be_deleted()]
+            json.dump(projects_to_keep, _f, indent=4, default=lambda x: x.to_dict())
 
     def add_task(self, project: Project, name: str, description: str = "") -> Task:
         task = Task(name, description=description, status="running")
@@ -138,13 +181,13 @@ class TaskManager:
         return task
 
     def add_project(self, name: str, description:str = "") -> Project:
-        project = Project(name)
+        project = Project(name, description=description, creation_time=datetime.now())
         self.projects.append(project)
         return project
 
     def list_projects_and_tasks(self) -> str:
         result = []
-        for project in self.active_projects:
+        for project in self.projects:
             result.append(f"Project: {project.name}")
             for task in project.tasks:
                 snooze_info = f" (Snoozed until {task.snooze_until})" if task.snooze_until else ""
@@ -157,12 +200,12 @@ class TaskManager:
     def gen_next_task(self):
         while True:
             if (
-                    not self.active_projects or
-                    not [p for p in self.active_projects if p.tasks] or
-                    not [t for p in self.active_projects for t in p.tasks if t.status == "running" or self.try_to_wake_up(t)]
+                    not self.running_projects or
+                    not [p for p in self.running_projects if p.tasks] or
+                    not [t for p in self.running_projects for t in p.tasks if t.status == "running" or self.try_to_wake_up(t)]
             ):
                 yield None
-            for project in self.active_projects:
+            for project in self.running_projects:
                 for task in project.tasks:
                     if task.status == "waiting" and self.try_to_wake_up(task):
                         yield task
@@ -174,9 +217,9 @@ class TaskManager:
         self.save_tasks()
         return
 
-    def snooze_task(self, task: Task, duration_minutes):
+    def snooze_task(self, task: Task, duration:timedelta):
         task.status = "waiting"
-        task.snooze_until = datetime.now() + timedelta(minutes=duration_minutes)
+        task.snooze_until = datetime.now() + duration
         self.save_tasks()
         return
 
@@ -198,6 +241,42 @@ class TaskManager:
         project.description = description
         self.save_tasks()
 
+    def pick_project(self) -> Project:
+        while True:
+            for idx, project in enumerate(self.projects, 1):
+                print(f"{idx}. {project.name}")
+            project_choice = input(
+                "Select a project by number or press Enter to create a new project: ")
+            if project_choice.isdigit() and 1 <= int(project_choice) <= len(self.projects):
+                project = self.projects[int(project_choice) - 1]
+            elif project_choice == "":
+                project = None
+            else:
+                print("Invalid input:")
+                time.sleep(1)
+                continue
+            return project
+
+    def pick_task(self, project: Project, filter=lambda t: t.status == "waiting") -> Task:
+        while True:
+            tasks_to_pick = [t for t in project.tasks if filter(t)]
+            if not tasks_to_pick:
+                print("No tasks to pick")
+                time.sleep(1)
+                return None
+            for idx, task in enumerate(tasks_to_pick, 1):
+                print(f"{idx}. {task.name}")
+            task_choice = input(
+                "Select a task by number")
+            if task_choice.isdigit() and 1 <= int(task_choice) <= len(tasks_to_pick):
+                task = project.tasks[int(task_choice) - 1]
+            else:
+                print("Invalid input:")
+                time.sleep(1)
+                continue
+            return task
+
+
 def main():
     manager = TaskManager(Path(__file__).parent.joinpath("taks.json"))
     task = manager.get_next_task()
@@ -217,30 +296,23 @@ def main():
         print("<enter> skips task")
         choice = input("Select an option:")
 
-        if choice.lower() == "a":
+        if choice.lower() == "ae" or choice.lower() == "a":
             print("--- Add Task ---")
-            print("Available Projects:")
-            if not manager.projects:
-                print("<No Projects>")
-                project = None
-            else:
-                for idx, project in enumerate(manager.active_projects, 1):
-                    print(f"{idx}. {project.name}")
-                project_choice = input("Select a project by number or press Enter to create a new project: ")
-                if project_choice.isdigit() and 1 <= int(project_choice) <= len(manager.active_projects):
-                    project = manager.active_projects[int(project_choice) - 1]
-                elif project_choice == "":
+            if choice.lower() == "ae":
+                print("Available Projects:")
+                if not manager.projects:
+                    print("<There are no existing projects>")
                     project = None
                 else:
-                    print("Invalid input:")
-                    time.sleep(1)
-                    continue
+                    project = manager.pick_project()
+            else:
+                project = task.project if task is not None else None
             if project is None:
                 project = manager.add_project(
                     input("New Project Name: "),
                     prompt_with_editor("Project Description:")
                 )
-            name = input("Task Name: ")
+            name = input("Task Name:")
             description = prompt_with_editor("Task Description:")
             manager.add_task(project, name, description)
         elif choice.lower() == "l":
@@ -250,10 +322,12 @@ def main():
             manager.mark_task(task, "done")
             task = manager.get_next_task()
         elif task and choice.lower() == "s":
-            duration = int(input("Duration to snooze (minutes): "))
-            manager.snooze_task(task, duration)
-            task = manager.get_next_task()
+            duration = prompt_duration()
+            if duration:
+                manager.snooze_task(task, duration)
+                task = manager.get_next_task()
         elif task and choice.lower() == "e":
+            print(f"Current Task Name: {task.name}")
             manager.edit_task(
                 task,
                 input("Task Name <enter=unchanged>: ") or task.name,
@@ -267,6 +341,15 @@ def main():
             )
         elif choice.lower() == "x":
             break
+        elif choice.lower() == "w":
+            project = manager.pick_project()
+            if project is None:
+                print("No project selected")
+                time.sleep(1)
+                continue
+            task = manager.pick_task(project,filter = lambda t:t.status == "waiting")
+            if task:
+                task.wake_up()
         elif choice == "":
             task = manager.get_next_task()
         else:
