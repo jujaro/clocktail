@@ -11,3 +11,11 @@
 - Some tasks can be snoozed, so they only appear after a certain time.
 - Tasks can be marked as running, waiting (snoozed), or done.
 
+# How to run.
+```bash
+$ git clone https://github.com/jujaro/clocktail.git
+$ cd clocktail
+$ pip install -r requirements.txt
+$ cd clocktail
+$ python main.py
+```
