@@ -1,5 +1,4 @@
-# clocktail
-
+# clocktail. A scheduler for my time.
 
 > "A system's performance is determined by its bottleneck." (The Goal by Eliyahu M. Goldratt)
 
