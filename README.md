@@ -5,6 +5,7 @@
 - This CLI tool functions like a TODO list. Instead of only showing what is left to do, it rotates your attention among the tasks you are working on, ensuring you focus on a single task at a time.
 - The idea is to work on the task presented by the tool until you either complete it or need to wait (e.g., waiting for a response). Then, you return to the tool to get the next task.
 - For the sort of work that I do, tasks require bursts of work followed by long wait periods. Idle time can be used to progress on other tasks.
+- The problem with frequent rotation between tasks is that you lose the context every time you switch. To help with this, you can write the context in the task to help you remember it next time you see it.
 - You can input your current tasks in a hierarchy of projects and tasks.
 - You can add as much context as you want for each project/task, so you have all the information you need when you return to it.
 - Some tasks can be snoozed, so they only appear after a certain time.
