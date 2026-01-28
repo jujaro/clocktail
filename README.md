@@ -19,4 +19,3 @@ $ pip install -r requirements.txt
 $ cd clocktail
 $ python main.py
 ```
-

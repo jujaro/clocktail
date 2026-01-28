@@ -285,7 +285,7 @@ def main():
         if task:
             task.display_with_project()
         print("--- Actions ---")
-        print("a - Add Task")
+        print("a - Add Task (ae for advanced)")
         print("l - List Projects and Tasks")
         if task:
             print("d - Mark Task as done")
