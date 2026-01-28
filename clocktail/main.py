@@ -278,7 +278,8 @@ class TaskManager:
 
 
 def main():
-    manager = TaskManager(Path(__file__).parent.joinpath("taks.json"))
+    _backend_path = Path.home().joinpath(".clocktail.json")
+    manager = TaskManager(_backend_path)
     task = manager.get_next_task()
     while True:
         os.system("clear")
