@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 from dataclasses import dataclass, field, asdict
+from enum import Enum
 import os
 import json
 from datetime import datetime, timedelta
@@ -14,10 +15,28 @@ import re
 PROJECT_MAX_DAYS=15
 
 @dataclass
+class Status:
+    name: str
+    icon: str
+    text_repr :str
+
+class StatusEnum(Enum):
+    RUNNING = Status("running", "🏃", "[Running]")
+    WAITING = Status("waiting", "⏰", "[Waiting]")
+    DONE = Status("done", "✅", "[Done]")
+
+    @classmethod
+    def from_str(cls, status_str: str):
+        for status in cls:
+            if status.value.name == status_str:
+                return status
+        raise ValueError(f"Unknown status: {status_str}")
+
+@dataclass
 class Task:
     name: str
     description: str
-    status: str
+    status: StatusEnum
     snooze_until: datetime | None = None
     _project : ref | None = None
 
@@ -30,7 +49,7 @@ class Task:
 
     def display(self):
         print(f"\nTask:")
-        print(f"[{self.status.upper()}] {self.name}")
+        print(f"{self.status.value.icon} {self.name}")
         print(self.description)
 
     def display_with_project(self):
@@ -41,7 +60,7 @@ class Task:
         print("="*80)
 
     def wake_up(self):
-        self.status = "running"
+        self.status = StatusEnum.RUNNING
         self.snooze_until = None
         self.project.save_tasks()
 
@@ -61,7 +80,7 @@ class Project:
                 {
                 "name": task.name,
                 "description": task.description,
-                "status": task.status,
+                "status": task.status.name,
                 "snooze_until": task.snooze_until.isoformat() if task.snooze_until else None
                 }
                 for task in self.tasks
@@ -77,11 +96,11 @@ class Project:
         if self.description:
             print(self.description)
         for t in self.tasks:
-            print(f"  [{t.status.upper()}] {t.name}")
+            print(f"  {t.status.value.icon} {t.name}")
 
     def is_done(self) -> bool:
         for t in self.tasks:
-            if t.status != "done":
+            if t.status != StatusEnum.DONE:
                 return False
         return True
 
@@ -157,7 +176,7 @@ class TaskManager:
                         task = Task(
                             name=d_task['name'],
                             description=d_task['description'],
-                            status=d_task['status'],
+                            status=StatusEnum.from_str(d_task['status']),
                             snooze_until=(
                                 datetime.fromisoformat(d_task['snooze_until'])
                                 if d_task['snooze_until']
@@ -175,7 +194,7 @@ class TaskManager:
             json.dump(projects_to_keep, _f, indent=4, default=lambda x: x.to_dict())
 
     def add_task(self, project: Project, name: str, description: str = "") -> Task:
-        task = Task(name, description=description, status="running")
+        task = Task(name, description=description, status=StatusEnum.RUNNING)
         project.add_task(task)
         self.save_tasks()
         return task
@@ -191,7 +210,7 @@ class TaskManager:
             result.append(f"Project: {project.name}")
             for task in project.tasks:
                 snooze_info = f" (Snoozed until {task.snooze_until})" if task.snooze_until else ""
-                result.append(f"  [{task.status.upper()}] {task.name}{snooze_info}")
+                result.append(f"  {task.status.value.icon} {task.name}{snooze_info}")
         return "\n".join(result)
 
     def get_next_task(self) -> Task:
@@ -202,23 +221,23 @@ class TaskManager:
             if (
                     not self.running_projects or
                     not [p for p in self.running_projects if p.tasks] or
-                    not [t for p in self.running_projects for t in p.tasks if t.status == "running" or self.try_to_wake_up(t)]
+                    not [t for p in self.running_projects for t in p.tasks if t.status == StatusEnum.RUNNING or self.try_to_wake_up(t)]
             ):
                 yield None
             for project in self.running_projects:
                 for task in project.tasks:
-                    if task.status == "waiting" and self.try_to_wake_up(task):
+                    if task.status == StatusEnum.WAITING and self.try_to_wake_up(task):
                         yield task
-                    elif task.status == "running":
+                    elif task.status == StatusEnum.RUNNING:
                         yield task
 
-    def mark_task(self, task, status):
+    def mark_task(self, task: Task, status: StatusEnum):
         task.status = status
         self.save_tasks()
         return
 
     def snooze_task(self, task: Task, duration:timedelta):
-        task.status = "waiting"
+        task.status = StatusEnum.WAITING
         task.snooze_until = datetime.now() + duration
         self.save_tasks()
         return
@@ -228,10 +247,10 @@ class TaskManager:
         task.description = description
         self.save_tasks()
 
-    def try_to_wake_up(self, task) -> bool:
+    def try_to_wake_up(self, task: Task) -> bool:
         if task.snooze_until and datetime.now() >= task.snooze_until:
             task.snooze_until = None
-            task.status = "running"
+            task.status = StatusEnum.RUNNING
             self.save_tasks()
             return True
         return False
@@ -257,7 +276,7 @@ class TaskManager:
                 continue
             return project
 
-    def pick_task(self, project: Project, filter=lambda t: t.status == "waiting") -> Task:
+    def pick_task(self, project: Project, filter=lambda t: t.status == StatusEnum.WAITING) -> Task:
         while True:
             tasks_to_pick = [t for t in project.tasks if filter(t)]
             if not tasks_to_pick:
@@ -309,18 +328,24 @@ def main():
             else:
                 project = task.project if task is not None else None
             if project is None:
+                project_name = input("Project Name:")
+                project_description = prompt_with_editor("Project Description:")
+                if project_description.strip() == "" or project_description.strip() == "Project Description:":
+                    project_description = ""
                 project = manager.add_project(
-                    input("New Project Name: "),
-                    prompt_with_editor("Project Description:")
+                    project_name,
+                    project_description
                 )
             name = input("Task Name:")
             description = prompt_with_editor("Task Description:")
+            if description.strip() == "" or description.strip() == "Task Description:":
+                description = ""
             manager.add_task(project, name, description)
         elif choice.lower() == "l":
             print(manager.list_projects_and_tasks())
             input("Press Enter to continue...")
         elif task and choice.lower() == "d":
-            manager.mark_task(task, "done")
+            manager.mark_task(task, StatusEnum.DONE)
             task = manager.get_next_task()
         elif task and choice.lower() == "s":
             duration = prompt_duration()
@@ -348,7 +373,7 @@ def main():
                 print("No project selected")
                 time.sleep(1)
                 continue
-            task = manager.pick_task(project,filter = lambda t:t.status == "waiting")
+            task = manager.pick_task(project,filter = lambda t:t.status == StatusEnum.WAITING)
             if task:
                 task.wake_up()
         elif choice == "":
