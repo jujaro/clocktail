@@ -28,7 +28,7 @@ class StatusEnum(Enum):
     @classmethod
     def from_str(cls, status_str: str):
         for status in cls:
-            if status.value.name == status_str:
+            if status.value.name == status_str.lower():
                 return status
         raise ValueError(f"Unknown status: {status_str}")
 
@@ -80,7 +80,7 @@ class Project:
                 {
                 "name": task.name,
                 "description": task.description,
-                "status": task.status.name,
+                "status": task.status.name.lower(),
                 "snooze_until": task.snooze_until.isoformat() if task.snooze_until else None
                 }
                 for task in self.tasks
@@ -295,6 +295,15 @@ class TaskManager:
                 continue
             return task
 
+def expand_task_name_flags(name: str) -> tuple[str,bool]:
+    """We can add flags at the end of the task name after a backslash, for example:
+        'Buy groceries \\SD" - adds a flag that this task doesn't need description (skup description step when adding the task)'
+    """
+    name, flag = name.split("\\", 1) if "\\" in name else (name, "")
+    if flag and flag != "SD":
+        print(f"Unknown flag: {flag}")
+        time.sleep(2)
+    return name.strip(), flag == "SD"
 
 def main():
     _backend_path = Path.home().joinpath(".clocktail.json")
@@ -337,9 +346,13 @@ def main():
                     project_description
                 )
             name = input("Task Name:")
-            description = prompt_with_editor("Task Description:")
-            if description.strip() == "" or description.strip() == "Task Description:":
+            name, _skip_description = expand_task_name_flags(name)
+            if _skip_description:
                 description = ""
+            else:
+                description = prompt_with_editor("Task Description:")
+                if description.strip() == "" or description.strip() == "Task Description:":
+                    description = ""
             manager.add_task(project, name, description)
         elif choice.lower() == "l":
             print(manager.list_projects_and_tasks())
