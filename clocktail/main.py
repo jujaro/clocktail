@@ -13,6 +13,21 @@ import re
 
 # Projects should be deleted after this
 PROJECT_MAX_DAYS=15
+# Done tasks should be deleted after this
+TASK_MAX_DAYS=3
+
+def format_datetime(dt: datetime) -> str:
+    """Human readable past date, e.g. '2026-09-18 08:31 (2d ago)'."""
+    seconds = int((datetime.now() - dt).total_seconds())
+    if seconds < 60:
+        ago = "just now"
+    elif seconds < 3600:
+        ago = f"{seconds // 60}m ago"
+    elif seconds < 86400:
+        ago = f"{seconds // 3600}h ago"
+    else:
+        ago = f"{seconds // 86400}d ago"
+    return f"{dt.strftime('%Y-%m-%d %H:%M')} ({ago})"
 
 @dataclass
 class Status:
@@ -38,11 +53,29 @@ class Task:
     description: str
     status: StatusEnum
     snooze_until: datetime | None = None
+    creation_time: datetime = field(default_factory=datetime.now)
+    completion_time: datetime | None = None
     _project : ref | None = None
 
     @property
     def project(self):
         return self._project()
+
+    def set_status(self, status: StatusEnum):
+        """Set the status, keeping completion_time in sync."""
+        self.status = status
+        if status == StatusEnum.DONE:
+            if self.completion_time is None:
+                self.completion_time = datetime.now()
+        else:
+            self.completion_time = None
+
+    def can_be_deleted(self) -> bool:
+        return (
+                self.status == StatusEnum.DONE and
+                self.completion_time is not None and
+                (datetime.now() - self.completion_time) > timedelta(days=TASK_MAX_DAYS)
+        )
 
     def set_project(self, project):
         self._project = ref(project)
@@ -50,6 +83,9 @@ class Task:
     def display(self):
         print(f"\nTask:")
         print(f"{self.status.value.icon} {self.name}")
+        print(f"Created: {format_datetime(self.creation_time)}")
+        if self.completion_time:
+            print(f"Done: {format_datetime(self.completion_time)}")
         print(self.description)
 
     def display_with_project(self):
@@ -58,11 +94,6 @@ class Task:
         print("="*80)
         self.display()
         print("="*80)
-
-    def wake_up(self):
-        self.status = StatusEnum.RUNNING
-        self.snooze_until = None
-        self.project.save_tasks()
 
 
 @dataclass
@@ -81,9 +112,14 @@ class Project:
                 "name": task.name,
                 "description": task.description,
                 "status": task.status.name.lower(),
-                "snooze_until": task.snooze_until.isoformat() if task.snooze_until else None
+                "snooze_until": task.snooze_until.isoformat() if task.snooze_until else None,
+                "creation_time": task.creation_time.isoformat(),
+                "completion_time": (
+                    task.completion_time.isoformat() if task.completion_time else None
+                )
                 }
                 for task in self.tasks
+                if not task.can_be_deleted()
             ]
         }
 
@@ -93,6 +129,7 @@ class Project:
 
     def display(self):
         print(f"\nProject: {self.name}")
+        print(f"Created: {format_datetime(self.creation_time)}")
         if self.description:
             print(self.description)
         for t in self.tasks:
@@ -182,6 +219,14 @@ class TaskManager:
                                 if d_task['snooze_until']
                                 else None
                             ),
+                            creation_time=datetime.fromisoformat(
+                                d_task.get('creation_time', datetime.now().isoformat())
+                            ),
+                            completion_time=(
+                                datetime.fromisoformat(d_task['completion_time'])
+                                if d_task.get('completion_time')
+                                else None
+                            ),
                         )
                         project.add_task(task)
                     self.projects.append(project)
@@ -232,15 +277,20 @@ class TaskManager:
                         yield task
 
     def mark_task(self, task: Task, status: StatusEnum):
-        task.status = status
+        task.set_status(status)
         self.save_tasks()
         return
 
     def snooze_task(self, task: Task, duration:timedelta):
-        task.status = StatusEnum.WAITING
+        task.set_status(StatusEnum.WAITING)
         task.snooze_until = datetime.now() + duration
         self.save_tasks()
         return
+
+    def wake_up_task(self, task: Task):
+        task.set_status(StatusEnum.RUNNING)
+        task.snooze_until = None
+        self.save_tasks()
 
     def edit_task(self, task: Task, name: str, description: str):
         task.name = name
@@ -250,7 +300,7 @@ class TaskManager:
     def try_to_wake_up(self, task: Task) -> bool:
         if task.snooze_until and datetime.now() >= task.snooze_until:
             task.snooze_until = None
-            task.status = StatusEnum.RUNNING
+            task.set_status(StatusEnum.RUNNING)
             self.save_tasks()
             return True
         return False
@@ -388,7 +438,7 @@ def main():
                 continue
             task = manager.pick_task(project,filter = lambda t:t.status == StatusEnum.WAITING)
             if task:
-                task.wake_up()
+                manager.wake_up_task(task)
         elif choice == "":
             task = manager.get_next_task()
         else:

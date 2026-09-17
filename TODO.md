@@ -20,4 +20,4 @@
   - view all the projects and tasks details
   - search in all the projects and tasks.
   - Mark any task as done or not done.
-- Add creation time, completed time for tasks as well as projects.
+- Add completed time for projects (tasks already have creation + completed time).
