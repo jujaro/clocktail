@@ -10,12 +10,81 @@ from weakref import ref
 import subprocess
 import tempfile
 import re
-from prompt_toolkit import prompt
+import shutil
+from prompt_toolkit import HTML, print_formatted_text, prompt
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.shortcuts import choice, clear
+from prompt_toolkit.shortcuts.choice_input import ChoiceInput
+from prompt_toolkit.styles import Style
+from prompt_toolkit.validation import Validator
 
 # Projects should be deleted after this
 PROJECT_MAX_DAYS=15
 # Done tasks should be deleted after this
 TASK_MAX_DAYS=3
+
+STYLE = Style.from_dict({
+    "project": "bold ansicyan",
+    "task": "bold",
+    "current": "bold ansiyellow",
+    "running": "",
+    "waiting": "ansiyellow",
+    "done": "ansibrightblack strike",
+    "dim": "ansibrightblack",
+    "key": "bold ansimagenta",
+    "placeholder": "ansibrightblack",
+    "selected-option": "bold ansicyan",
+})
+
+def echo(template: str = "", *args) -> None:
+    """Print styled text. `args` are HTML-escaped into the `{}` slots of `template`."""
+    print_formatted_text(HTML(template).format(*args), style=STYLE)
+
+def rule() -> None:
+    echo("<dim>{}</dim>", "─" * min(shutil.get_terminal_size().columns, 80))
+
+def ask(message: str | HTML, **kwargs) -> str:
+    return prompt(HTML(message) if isinstance(message, str) else message, style=STYLE, **kwargs)
+
+def pause(message: str = "Press any key to continue…") -> None:
+    kb = KeyBindings()
+    @kb.add("<any>")
+    @kb.add("escape", eager=True)
+    def _(event):
+        event.app.exit(result="")
+    ask(f"<dim>{message}</dim>", key_bindings=kb)
+
+def pick(message: str, options: list):
+    """Arrow-key selection list; Esc or Ctrl-C raises KeyboardInterrupt."""
+    kb = KeyBindings()
+    @kb.add("escape", eager=True)
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt())
+    return choice(
+        HTML(message),
+        options=options,
+        style=STYLE,
+        key_bindings=kb,
+        bottom_toolbar=" ↑↓ move · Enter select · Esc cancel ",
+    )
+
+NOT_EMPTY = Validator.from_callable(
+    lambda text: bool(text.strip()),
+    error_message="Can't be empty",
+    move_cursor_to_end=True,
+)
+
+def format_until(dt: datetime) -> str:
+    """Human readable future date, e.g. 'in 2h'."""
+    seconds = int((dt - datetime.now()).total_seconds())
+    if seconds <= 0:
+        return "now"
+    if seconds < 3600:
+        return f"in {max(seconds // 60, 1)}m"
+    if seconds < 86400:
+        return f"in {seconds // 3600}h"
+    return f"in {seconds // 86400}d"
 
 def format_datetime(dt: datetime) -> str:
     """Human readable past date, e.g. '2026-09-18 08:31 (2d ago)'."""
@@ -82,19 +151,22 @@ class Task:
         self._project = ref(project)
 
     def display(self):
-        print(f"\nTask:")
-        print(f"{self.status.value.icon} {self.name}")
-        print(f"Created: {format_datetime(self.creation_time)}")
+        echo("{} <task>{}</task>", self.status.value.icon, self.name)
+        echo("<dim>Created {}</dim>", format_datetime(self.creation_time))
         if self.completion_time:
-            print(f"Done: {format_datetime(self.completion_time)}")
-        print(self.description)
+            echo("<dim>Done {}</dim>", format_datetime(self.completion_time))
+        if self.snooze_until:
+            echo("<dim>Wakes up {}</dim>", format_until(self.snooze_until))
+        if self.description.strip():
+            echo()
+            echo("{}", self.description.rstrip())
 
     def display_with_project(self):
-        print("="*80)
-        self.project.display()
-        print("="*80)
+        rule()
+        self.project.display(current=self)
+        rule()
         self.display()
-        print("="*80)
+        rule()
 
 
 @dataclass
@@ -128,13 +200,17 @@ class Project:
         task.set_project(self)
         self.tasks.append(task)
 
-    def display(self):
-        print(f"\nProject: {self.name}")
-        print(f"Created: {format_datetime(self.creation_time)}")
-        if self.description:
-            print(self.description)
+    def display(self, current: Task | None = None):
+        echo("<project>{}</project>  <dim>created {}</dim>", self.name, format_datetime(self.creation_time))
+        if self.description.strip():
+            echo("{}", self.description.rstrip())
         for t in self.tasks:
-            print(f"  {t.status.value.icon} {t.name}")
+            css = "current" if t is current else t.status.value.name
+            wakes = f"  wakes up {format_until(t.snooze_until)}" if t.snooze_until else ""
+            echo(
+                "  {} {} <" + css + ">{}</" + css + "><dim>{}</dim>",
+                "▶" if t is current else " ", t.status.value.icon, t.name, wakes,
+            )
 
     def is_done(self) -> bool:
         for t in self.tasks:
@@ -166,25 +242,31 @@ def prompt_with_editor(text: str):
 
     return content
 
-def prompt_duration() -> timedelta|None:
-    def _invalid(i:str):
-        print(f"Invalid input:{i}")
-        time.sleep(2)
+DURATION_RE = re.compile(r"([0-9]+)([mhd])")
 
-    str_input = input("Duration to snooze (suffix with m/h/d): ")
-    mmatch = re.match("([0-9]+)([mhd])", str_input)
-    if mmatch:
-        number, letter = mmatch.groups()
-        number = int(number)
-        match letter:
-            case "m":
-                return timedelta(minutes=number)
-            case "h":
-                return timedelta(hours=number)
-            case "d":
-                return timedelta(days=number)
-    _invalid(str_input)
-    return None
+def prompt_duration() -> timedelta|None:
+    str_input = ask(
+        "<b>Snooze for:</b> ",
+        placeholder=HTML("<placeholder>e.g. 30m, 2h, 1d (empty to cancel)</placeholder>"),
+        completer=WordCompleter(["15m", "30m", "1h", "2h", "4h", "1d", "2d", "7d"]),
+        validator=Validator.from_callable(
+            lambda text: not text.strip() or bool(DURATION_RE.fullmatch(text.strip())),
+            error_message="Use a number followed by m, h or d (e.g. 30m)",
+            move_cursor_to_end=True,
+        ),
+        validate_while_typing=False,
+    ).strip()
+    if not str_input:
+        return None
+    number, letter = DURATION_RE.fullmatch(str_input).groups()
+    number = int(number)
+    match letter:
+        case "m":
+            return timedelta(minutes=number)
+        case "h":
+            return timedelta(hours=number)
+        case "d":
+            return timedelta(days=number)
 
 
 class TaskManager:
@@ -250,14 +332,23 @@ class TaskManager:
         self.projects.append(project)
         return project
 
-    def list_projects_and_tasks(self) -> str:
-        result = []
+    def display_projects_and_tasks(self) -> None:
+        if not self.projects:
+            echo("<dim>There are no projects yet.</dim>")
         for project in self.projects:
-            result.append(f"Project: {project.name}")
-            for task in project.tasks:
-                snooze_info = f" (Snoozed until {task.snooze_until})" if task.snooze_until else ""
-                result.append(f"  {task.status.value.icon} {task.name}{snooze_info}")
-        return "\n".join(result)
+            project.display()
+            echo()
+
+    def status_summary(self) -> str:
+        tasks = [t for p in self.projects for t in p.tasks]
+        running = sum(t.status == StatusEnum.RUNNING for t in tasks)
+        waiting = [t for t in tasks if t.status == StatusEnum.WAITING]
+        done = sum(t.status == StatusEnum.DONE for t in tasks)
+        waiting_info = f"{len(waiting)} waiting"
+        next_wake = min((t.snooze_until for t in waiting if t.snooze_until), default=None)
+        if next_wake:
+            waiting_info += f" (next {format_until(next_wake)})"
+        return f" {running} running · {waiting_info} · {done} done "
 
     def get_next_task(self) -> Task:
         return next(self.next_task_generator)
@@ -311,40 +402,40 @@ class TaskManager:
         project.description = description
         self.save_tasks()
 
-    def pick_project(self) -> Project:
-        while True:
-            for idx, project in enumerate(self.projects, 1):
-                print(f"{idx}. {project.name}")
-            project_choice = input(
-                "Select a project by number or press Enter to create a new project: ")
-            if project_choice.isdigit() and 1 <= int(project_choice) <= len(self.projects):
-                project = self.projects[int(project_choice) - 1]
-            elif project_choice == "":
-                project = None
-            else:
-                print("Invalid input:")
-                time.sleep(1)
-                continue
-            return project
+    def pick_project(self, allow_new: bool = True, filter=lambda p: True) -> Project | None:
+        """Returns None when a new project should be created (or nothing can be picked)."""
+        projects = [p for p in self.projects if filter(p)]
+        if not projects:
+            return None
+        options = [
+            (
+                p,
+                HTML("<project>{}</project> <dim>({} open)</dim>").format(
+                    p.name, sum(t.status != StatusEnum.DONE for t in p.tasks)
+                ),
+            )
+            for p in projects
+        ]
+        if allow_new:
+            options.append((None, HTML("<b>+ New project</b>")))
+        return pick("<b>Select a project:</b>", options)
 
-    def pick_task(self, project: Project, filter=lambda t: t.status == StatusEnum.WAITING) -> Task:
-        while True:
-            tasks_to_pick = [t for t in project.tasks if filter(t)]
-            if not tasks_to_pick:
-                print("No tasks to pick")
-                time.sleep(1)
-                return None
-            for idx, task in enumerate(tasks_to_pick, 1):
-                print(f"{idx}. {task.name}")
-            task_choice = input(
-                "Select a task by number")
-            if task_choice.isdigit() and 1 <= int(task_choice) <= len(tasks_to_pick):
-                task = project.tasks[int(task_choice) - 1]
-            else:
-                print("Invalid input:")
-                time.sleep(1)
-                continue
-            return task
+    def pick_task(self, project: Project, filter=lambda t: t.status == StatusEnum.WAITING) -> Task | None:
+        tasks_to_pick = [t for t in project.tasks if filter(t)]
+        if not tasks_to_pick:
+            return None
+        options = [
+            (
+                t,
+                HTML("{} {} <dim>{}</dim>").format(
+                    t.status.value.icon,
+                    t.name,
+                    f"wakes up {format_until(t.snooze_until)}" if t.snooze_until else "",
+                ),
+            )
+            for t in tasks_to_pick
+        ]
+        return pick("<b>Select a task:</b>", options)
 
 def expand_task_name_flags(name: str) -> tuple[str,bool]:
     """We can add flags at the end of the task name after a backslash, for example:
@@ -356,94 +447,127 @@ def expand_task_name_flags(name: str) -> tuple[str,bool]:
         time.sleep(2)
     return name.strip(), flag == "SD"
 
+ACTIONS = [
+    # (action, shortcut key, label, needs a current task)
+    ("next", "enter", "Next task", False),
+    ("add", "a", "Add task", False),
+    ("add_advanced", "A", "Add task to another project", False),
+    ("list", "l", "List projects and tasks", False),
+    ("done", "d", "Mark task as done", True),
+    ("snooze", "s", "Snooze task", True),
+    ("edit", "e", "Edit task", True),
+    ("edit_project", "p", "Edit project", True),
+    ("wake", "w", "Wake up a snoozed task", False),
+    ("exit", "x", "Exit", False),
+]
+
+def prompt_action(has_task: bool, status: str) -> str:
+    kb = KeyBindings()
+    options = []
+    for action, key, label, needs_task in ACTIONS:
+        if needs_task and not has_task:
+            continue
+        if key != "enter":
+            kb.add(key)(lambda event, action=action: event.app.exit(result=action))
+        if action == "next" and not has_task:
+            label = "Refresh"
+        options.append((action, HTML("<key>{}</key>  {}").format("↵" if key == "enter" else key, label)))
+    return ChoiceInput(
+        message=HTML("<b>What next?</b>"),
+        options=options,
+        default="next",
+        style=STYLE,
+        key_bindings=kb,
+        bottom_toolbar=status,
+        show_numbers=False,
+    ).prompt()
+
+def prompt_description(header: str) -> str:
+    description = prompt_with_editor(header)
+    if description.strip() in ("", header):
+        return ""
+    return description
+
 def main():
     _backend_path = Path.home().joinpath(".clocktail.json")
     manager = TaskManager(_backend_path)
     task = manager.get_next_task()
     while True:
-        os.system("clear")
+        clear()
         if task:
             task.display_with_project()
-        print("--- Actions ---")
-        print("a - Add Task (ae for advanced)")
-        print("l - List Projects and Tasks")
-        if task:
-            print("d - Mark Task as done")
-            print("s - Snooze Task")
-            print("e - Edit Task")
-            print("p - Edit Project")
-        print("x - Exit")
-        print("<enter> skips task")
-        choice = input("Select an option:")
-
-        if choice.lower() == "ae" or choice.lower() == "a":
-            print("--- Add Task ---")
-            if choice.lower() == "ae":
-                print("Available Projects:")
-                if not manager.projects:
-                    print("<There are no existing projects>")
-                    project = None
-                else:
-                    project = manager.pick_project()
-            else:
-                project = task.project if task is not None else None
-            if project is None:
-                project_name = input("Project Name:")
-                project_description = prompt_with_editor("Project Description:")
-                if project_description.strip() == "" or project_description.strip() == "Project Description:":
-                    project_description = ""
-                project = manager.add_project(
-                    project_name,
-                    project_description
-                )
-            name = input("Task Name:")
-            name, _skip_description = expand_task_name_flags(name)
-            if _skip_description:
-                description = ""
-            else:
-                description = prompt_with_editor("Task Description:")
-                if description.strip() == "" or description.strip() == "Task Description:":
-                    description = ""
-            manager.add_task(project, name, description)
-        elif choice.lower() == "l":
-            print(manager.list_projects_and_tasks())
-            input("Press Enter to continue...")
-        elif task and choice.lower() == "d":
-            manager.mark_task(task, StatusEnum.DONE)
-            task = manager.get_next_task()
-        elif task and choice.lower() == "s":
-            duration = prompt_duration()
-            if duration:
-                manager.snooze_task(task, duration)
-                task = manager.get_next_task()
-        elif task and choice.lower() == "e":
-            manager.edit_task(
-                task,
-                prompt("Task Name: ", default=task.name).strip() or task.name,
-                prompt_with_editor(task.description)
-            )
-        elif task and choice.lower() == "p":
-            manager.edit_project(
-                task.project,
-                prompt("Project Name: ", default=task.project.name).strip() or task.project.name,
-                prompt_with_editor(task.project.description)
-            )
-        elif choice.lower() == "x":
-            break
-        elif choice.lower() == "w":
-            project = manager.pick_project()
-            if project is None:
-                print("No project selected")
-                time.sleep(1)
-                continue
-            task = manager.pick_task(project,filter = lambda t:t.status == StatusEnum.WAITING)
-            if task:
-                manager.wake_up_task(task)
-        elif choice == "":
-            task = manager.get_next_task()
         else:
-            print("Invalid choice. Try again.")
-            time.sleep(1)
+            echo("<dim>Nothing to work on right now. Add a task, or wait for a snoozed one to wake up.</dim>")
+        echo()
+        try:
+            action = prompt_action(task is not None, manager.status_summary())
+        except (KeyboardInterrupt, EOFError):
+            break
+
+        try:
+            if action in ("add", "add_advanced"):
+                if action == "add_advanced":
+                    project = manager.pick_project()
+                else:
+                    project = task.project if task is not None else None
+                if project is None:
+                    project_name = ask("<b>Project name:</b> ", validator=NOT_EMPTY).strip()
+                    project_description = prompt_description("Project Description:")
+                    project = manager.add_project(project_name, project_description)
+                name = ask(
+                    HTML("<b>Task name for</b> <project>{}</project><b>:</b> ").format(project.name),
+                    placeholder=HTML("<placeholder>end with \\SD to skip the description</placeholder>"),
+                    validator=Validator.from_callable(
+                        lambda text: bool(text.split("\\", 1)[0].strip()),
+                        error_message="Can't be empty",
+                        move_cursor_to_end=True,
+                    ),
+                )
+                name, _skip_description = expand_task_name_flags(name)
+                description = "" if _skip_description else prompt_description("Task Description:")
+                new_task = manager.add_task(project, name, description)
+                if task is None:
+                    task = new_task
+            elif action == "list":
+                clear()
+                manager.display_projects_and_tasks()
+                pause()
+            elif action == "done":
+                manager.mark_task(task, StatusEnum.DONE)
+                task = manager.get_next_task()
+            elif action == "snooze":
+                duration = prompt_duration()
+                if duration:
+                    manager.snooze_task(task, duration)
+                    task = manager.get_next_task()
+            elif action == "edit":
+                manager.edit_task(
+                    task,
+                    ask("<b>Task name:</b> ", default=task.name, validator=NOT_EMPTY).strip(),
+                    prompt_with_editor(task.description)
+                )
+            elif action == "edit_project":
+                manager.edit_project(
+                    task.project,
+                    ask("<b>Project name:</b> ", default=task.project.name, validator=NOT_EMPTY).strip(),
+                    prompt_with_editor(task.project.description)
+                )
+            elif action == "exit":
+                break
+            elif action == "wake":
+                has_waiting = lambda t: t.status == StatusEnum.WAITING
+                project = manager.pick_project(allow_new=False, filter=lambda p: any(map(has_waiting, p.tasks)))
+                if project is None:
+                    pause("There are no snoozed tasks. Press any key to continue…")
+                    continue
+                woken = manager.pick_task(project, filter=has_waiting)
+                if woken:
+                    manager.wake_up_task(woken)
+                    task = woken
+            elif action == "next":
+                task = manager.get_next_task()
+        except (KeyboardInterrupt, EOFError):
+            continue
 
 if __name__ == "__main__":
     main()
