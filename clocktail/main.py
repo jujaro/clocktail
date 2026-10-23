@@ -1,7 +1,9 @@
 #!/usr/bin/python3
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+import fcntl
 import os
+import sys
 import json
 from datetime import datetime, timedelta
 import time
@@ -317,9 +319,13 @@ class TaskManager:
             self.projects = []
 
     def save_tasks(self) -> None:
-        with open(self.backend_path, "w") as _f:
-            projects_to_keep = [p for p in self.projects if not p.can_be_deleted()]
+        projects_to_keep = [p for p in self.projects if not p.can_be_deleted()]
+        tmp_path = self.backend_path.with_name(self.backend_path.name + ".tmp")
+        with open(tmp_path, "w") as _f:
             json.dump(projects_to_keep, _f, indent=4, default=lambda x: x.to_dict())
+            _f.flush()
+            os.fsync(_f.fileno())
+        os.replace(tmp_path, self.backend_path)
 
     def add_task(self, project: Project, name: str, description: str = "") -> Task:
         task = Task(name, description=description, status=StatusEnum.RUNNING)
@@ -488,8 +494,28 @@ def prompt_description(header: str) -> str:
         return ""
     return description
 
+def acquire_lock(lock_path: Path):
+    """Returns (lock_file, None) on success; keep lock_file alive for the whole session.
+    Returns (None, other_pid) if another instance holds the lock."""
+    lock_file = open(lock_path, "a+")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.seek(0)
+        pid = lock_file.read().strip()
+        lock_file.close()
+        return None, pid
+    lock_file.truncate(0)
+    lock_file.write(str(os.getpid()))
+    lock_file.flush()
+    return lock_file, None
+
 def main():
     _backend_path = Path.home().joinpath(".clocktail.json")
+    _lock, other_pid = acquire_lock(_backend_path.with_suffix(".lock"))
+    if _lock is None:
+        echo("<b>clocktail is already running</b> <dim>(pid {})</dim>. Close it before starting another one.", other_pid or "?")
+        sys.exit(1)
     manager = TaskManager(_backend_path)
     task = manager.get_next_task()
     while True:

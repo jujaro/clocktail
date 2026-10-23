@@ -25,11 +25,16 @@ $ uv run clocktail
 ```
 
 # How to install.
-Install it as a global command (`clocktail`, or the short alias `ct`):
+Install it as a global command (`clocktail`, or the short alias `ct`) that you can run from any folder:
 ```bash
-$ uv tool install .   # or: make
+$ make install        # same as: uv tool install --force --editable . && uv tool update-shell
 $ ct
 ```
+- The install is editable, so `git pull` or local edits take effect without reinstalling. Re-run `make install` only if dependencies change.
+- The commands are placed in `~/.local/bin`; `uv tool update-shell` adds it to your `PATH` if needed (open a new terminal afterwards).
+- Uninstall with `make uninstall`.
+
+Only one instance can run at a time (it holds a lock on `~/.clocktail.lock`), so two terminals can't overwrite each other's changes to `~/.clocktail.json`.
 
 # Development.
 ```bash

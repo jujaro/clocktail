@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 from datetime import datetime, timedelta
-from clocktail.main import TaskManager, Task, StatusEnum, TASK_MAX_DAYS  # Assuming the main code is saved as task_manager.py
+import os
+from clocktail.main import TaskManager, Task, StatusEnum, TASK_MAX_DAYS, acquire_lock  # Assuming the main code is saved as task_manager.py
 
 @pytest.fixture
 def manager():
@@ -66,16 +67,17 @@ def test_get_next_task_snoozed_future(manager):
 def test_mark_task_as_done(manager):
     manager.add_task(manager.add_project("Project1"), "Task 1")
     task = manager.projects[0].tasks[0]
-    manager.mark_task(task, "done")
+    manager.mark_task(task, StatusEnum.DONE)
+    manager.load_tasks()
     task = manager.projects[0].tasks[0]
-    assert task.status == "done"
+    assert task.status == StatusEnum.DONE
 
 def test_snooze_task(manager):
     task = manager.add_task(manager.add_project("Project1"), "Task 1")
     manager.snooze_task(task, timedelta(minutes=10))
     manager.load_tasks()
     task: Task = manager.projects[0].tasks[0]
-    assert task.status == "waiting"
+    assert task.status == StatusEnum.WAITING
     assert (task.snooze_until - datetime.now()) >= timedelta(minutes=9)
 
 def test_edit_task(manager):
@@ -150,3 +152,19 @@ def test_wake_up_task(manager):
     task = manager.projects[0].tasks[0]
     assert task.status == StatusEnum.RUNNING
     assert task.snooze_until is None
+
+def test_second_instance_cannot_take_lock(tmp_path):
+    lock_path = tmp_path / "tasks.lock"
+    first, _ = acquire_lock(lock_path)
+    assert first is not None
+    second, other_pid = acquire_lock(lock_path)
+    assert second is None
+    assert other_pid == str(os.getpid())
+    first.close()
+    third, _ = acquire_lock(lock_path)
+    assert third is not None
+    third.close()
+
+def test_save_leaves_no_temp_file(manager):
+    manager.add_task(manager.add_project("Project1"), "Task 1")
+    assert [p.name for p in manager.backend_path.parent.iterdir()] == ["tasks.json"]
