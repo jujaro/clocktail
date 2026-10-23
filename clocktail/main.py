@@ -10,6 +10,7 @@ from weakref import ref
 import subprocess
 import tempfile
 import re
+from prompt_toolkit import prompt
 
 # Projects should be deleted after this
 PROJECT_MAX_DAYS=15
@@ -416,16 +417,15 @@ def main():
                 manager.snooze_task(task, duration)
                 task = manager.get_next_task()
         elif task and choice.lower() == "e":
-            print(f"Current Task Name: {task.name}")
             manager.edit_task(
                 task,
-                input("Task Name <enter=unchanged>: ") or task.name,
+                prompt("Task Name: ", default=task.name).strip() or task.name,
                 prompt_with_editor(task.description)
             )
         elif task and choice.lower() == "p":
             manager.edit_project(
                 task.project,
-                input("Project Name <enter=unchanged>: ") or task.project.name,
+                prompt("Project Name: ", default=task.project.name).strip() or task.project.name,
                 prompt_with_editor(task.project.description)
             )
         elif choice.lower() == "x":

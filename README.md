@@ -12,10 +12,29 @@
 - Tasks can be marked as running, waiting (snoozed), or done.
 
 # How to run.
+This project is managed with [uv](https://docs.astral.sh/uv/). Install it first if you don't have it:
+```bash
+$ curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Run from a clone (uv creates the virtual environment and installs dependencies automatically):
 ```bash
 $ git clone https://github.com/jujaro/clocktail.git
 $ cd clocktail
-$ pip install -r requirements.txt
-$ cd clocktail
-$ python main.py
+$ uv run clocktail
+```
+
+# How to install.
+Install it as a global command (`clocktail`, or the short alias `ct`):
+```bash
+$ uv tool install .   # or: make
+$ ct
+```
+
+# Development.
+```bash
+$ uv sync              # create .venv with all dependencies
+$ uv run pytest        # run the tests (or: make test)
+$ uv add <package>     # add a runtime dependency
+$ uv add --dev <package>  # add a development dependency
 ```

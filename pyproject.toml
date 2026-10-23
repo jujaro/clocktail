@@ -1,0 +1,23 @@
+[project]
+name = "clocktail"
+version = "0.1.0"
+description = "A CLI scheduler that rotates your attention among the tasks you are working on."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "prompt-toolkit>=3.0.53",
+]
+
+[project.scripts]
+clocktail = "clocktail.main:main"
+ct = "clocktail.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

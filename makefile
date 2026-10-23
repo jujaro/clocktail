@@ -1,4 +1,6 @@
 
 all:
-	cp clocktail/main.py ~/bin/ct
+	uv tool install --force --reinstall .
 
+test:
+	uv run pytest
